@@ -22,7 +22,7 @@ export default function RecordPage() {
   const recording = live.status === "recording";
   const hasText = !busy && draft.trim().length > 0;
   const detected = saved?.languages ? saved.languages.split(",") : live.languages;
-  const neverStarted = live.status === "error" && live.elapsedSec === 0 && live.segments.length === 0;
+  const neverStarted = live.status === "error" && !live.connected;
   const statusLabel = neverStarted ? "Couldn’t start" : STATUS_LABEL[live.status];
 
   useEffect(() => {

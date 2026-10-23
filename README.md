@@ -29,7 +29,8 @@
 
 **Live transcription**
 - Words appear while you speak. Partial text is shown in grey and settles into final text at the end of each spoken segment.
-- **Multilingual and code-switching:** the language is auto-detected per segment, so you can switch mid-sentence (e.g. Hindi ↔ English, Malayalam ↔ English). Detected languages appear live as chips ("Hindi, English detected").
+- **Start talking immediately:** the mic starts the moment you tap it, while the connection is set up in parallel; audio from those first moments is queued and sent as soon as the session is ready.
+- **Multilingual and code-switching:** Gemini auto-detects the spoken language, so you can switch mid-sentence (e.g. Hindi ↔ English, Malayalam ↔ English). Detected languages appear live as chips ("Hindi, English detected") within the first second of speech.
 - A mic button whose halo follows your voice level, plus a timer and clear status ("Listening…", "Finishing up…", "Couldn't start").
 
 **Saving and history**
@@ -70,8 +71,8 @@ flowchart TB
 The same container also serves the built React app (gzip, long-lived cache for hashed assets), so the whole product is one deployable unit behind one URL.
 
 1. **Capture.** The browser records the mic with echo cancellation, noise suppression and auto gain. An `AudioWorklet` running on the audio thread resamples it from the device rate (usually 48 kHz) to **16 kHz mono 16-bit PCM**, which is what the model expects, and sends a chunk every **100 ms**. Resampling in the worklet (rather than creating a 16 kHz `AudioContext`) works in every browser, including Firefox.
-2. **Proxy.** Audio streams over a WebSocket to FastAPI, which forwards it to Gemini Live. **The API key never reaches the browser.** The proxy runs two tasks concurrently (client → Gemini audio, Gemini → client text) and reacts to whichever finishes first. A provider failure is reported immediately instead of after the user presses stop.
-3. **Transcribe.** Gemini returns partial (`interim`) and finished (`final`) text, each with the BCP-47 language code it detected.
+2. **Proxy.** Audio streams over a WebSocket to FastAPI, which forwards it to Gemini Live. The mic starts as soon as you tap it, and audio captured while the connection opens is queued, so nothing is lost. **The API key never reaches the browser.** The proxy runs two tasks concurrently (client → Gemini audio, Gemini → client text) and reacts to whichever finishes first. A provider failure is reported immediately instead of after the user presses stop.
+3. **Transcribe.** Gemini returns a growing partial (`interim`) text and a finished (`final`) segment. The protocol carries a BCP-47 `language` field for providers that report one; the current model leaves it empty, so the browser identifies languages from the script of the text as it arrives (Devanagari → Hindi, Malayalam script → Malayalam, Latin → English, and 15 more).
 4. **Save.** When the session ends, the frontend saves the transcript, its detected languages and its duration through the REST API.
 
 ### A live session, end to end
@@ -86,14 +87,18 @@ sequenceDiagram
     participant DB as PostgreSQL
 
     User->>B: Tap the mic
-    B->>S: Open WebSocket /ws/transcribe (owner cookie)
+    par Start immediately
+        B->>B: Start mic and AudioWorklet, queue audio
+    and Connect
+        B->>S: Open WebSocket /ws/transcribe (owner cookie)
+    end
     alt Over a rate limit
         S-->>B: error, close 1008
         Note over B: Shows "Couldn't start"
     else Allowed
         S->>G: Open Live session (API key stays on the server)
         S-->>B: ready
-        B->>B: Start mic and AudioWorklet
+        B->>S: Queued audio
         loop Every 100 ms while speaking
             B->>S: PCM16 audio chunk
             S->>G: Audio
@@ -104,7 +109,7 @@ sequenceDiagram
         B->>S: stop
         S->>G: End of audio
         G-->>S: Last final segments
-        S-->>B: Remaining text, then done
+        S-->>B: Remaining text, then done once Gemini goes quiet
         B->>S: POST /api/transcriptions (auto-save)
         S->>DB: INSERT owner_id, text, languages, duration
         S-->>B: 201 Created
@@ -117,11 +122,11 @@ If Gemini fails at any point (quota, outage), the server sends a user-safe `erro
 
 | Direction | Message | Meaning |
 |---|---|---|
-| server → client | `{"type":"ready"}` | Gemini session is open; the client starts the mic |
+| server → client | `{"type":"ready"}` | Gemini session is open; the client sends its queued audio, then streams live |
 | client → server | *binary frame* | ~100 ms of PCM16 audio, 16 kHz mono |
 | server → client | `{"type":"interim","text":"…","language":"hi-IN"}` | Partial text that may still change |
 | server → client | `{"type":"final","text":"…","language":"hi-IN"}` | A finished speech segment |
-| client → server | `{"type":"stop"}` | No more audio; the server flushes the remaining text (up to 10 s) |
+| client → server | `{"type":"stop"}` | No more audio. The server forwards the remaining text and ends once Gemini goes quiet: 1.5 s after the last final segment, 3 s if a segment is still open, 10 s at most |
 | server → client | `{"type":"done"}` | Session finished; socket closes normally |
 | server → client | `{"type":"error","message":"…"}` | Always a user-safe message. Closes with **1008** if a rate limit rejected the session, **1011** otherwise |
 
@@ -162,14 +167,14 @@ The frontend has **no runtime dependencies beyond React and React Router**. Mic 
 │   │   ├── db/session.py            # engine, session, get_db
 │   │   ├── models/                  # SQLAlchemy models
 │   │   ├── schemas/                 # Pydantic request/response models
-│   │   ├── repositories/            # all SQL, owner-scoped
-│   │   ├── services/                # business rules
+│   │   ├── repositories/            # all SQL: owner-scoped transcriptions, daily usage counter
+│   │   ├── services/                # business rules, daily session quota
 │   │   ├── stt/
 │   │   │   ├── base.py              # provider interface (Strategy), TranscriptEvent, SpeechToTextError
 │   │   │   ├── factory.py           # picks the provider from STT_PROVIDER
 │   │   │   └── gemini_live.py       # Gemini adapter + error mapping
 │   │   └── main.py                  # app setup, middleware, static frontend
-│   ├── alembic/versions/            # 0001 create table, 0002 add owner_id
+│   ├── alembic/versions/            # 0001 transcriptions, 0002 owner_id, 0003 daily usage
 │   ├── tests/                       # pytest suite
 │   ├── requirements.txt             # pinned runtime dependencies
 │   ├── requirements-dev.txt         # + pytest, httpx
@@ -253,6 +258,7 @@ All environment-specific settings come from environment variables, or from `back
 | `GEMINI_MODEL` | yes | `gemini-3.5-transcribe-live` | Live transcription model |
 | `STT_MODE` | yes | `VERBATIM` | `VERBATIM` keeps every word; `SMART` removes fillers and formats |
 | `STT_LANGUAGES` | no | *(empty)* | Comma-separated BCP-47 hints, e.g. `hi-IN,en-IN`. **Empty = automatic detection** (recommended; it handles code-switching) |
+| `STT_DAILY_SESSION_LIMIT` | no | *(empty)* | App-wide live sessions per day, reset at midnight Pacific like the Gemini quota. Set to ~80% of the model's requests-per-day limit ([AI Studio rate limits](https://aistudio.google.com/rate-limit)). Empty = no app-level cap |
 | `CORS_ORIGINS` | no | *(empty)* | Only needed if a different origin calls the API. Empty = same origin only |
 
 `backend/.env` is git-ignored; `backend/.env.example` documents every variable. The local Postgres container's own credentials (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`) live in the git-ignored root `.env` (template: `.env.example`).
@@ -323,6 +329,12 @@ CREATE TABLE transcriptions (
   updated_at    TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 CREATE INDEX ix_transcriptions_owner_created ON transcriptions (owner_id, created_at);
+
+-- One row per quota day (Pacific time): live sessions started, for the daily cap
+CREATE TABLE stt_daily_usage (
+  day       DATE    PRIMARY KEY,
+  sessions  INTEGER NOT NULL
+);
 ```
 
 Every query filters by `owner_id` and sorts by `created_at`, which is what the composite index serves. Schema changes are versioned with Alembic (`backend/alembic/versions`) and applied automatically when the container starts.
@@ -346,7 +358,9 @@ Every query filters by `owner_id` and sorts by `created_at`, which is what the c
 | Per IP (offices and NAT share an IP) | 3 | 60 |
 | Whole app | 10 | — |
 
-A rejected session gets a clear message ("A recording is already running in another tab…", "You've reached 20 recordings this hour…") and the UI shows **"Couldn't start"**. The global cap is the hard bound; per-client keys are best effort.
+A rejected session gets a clear message ("A recording is already running in another tab…", "You've reached 20 recordings this hour…", "Vaani has reached today's transcription limit. It resets in about 5 hours.") and the UI shows **"Couldn't start"**. The global caps are the hard bound; per-client keys are best effort.
+
+The **daily cap** keeps the app below the Gemini API's requests-per-day quota, so visitors get a clear message (with the time until reset) instead of provider errors, and some quota is left for the owner. The count lives in PostgreSQL, so it survives restarts and the free tier's sleep cycles. Each session is counted with a single atomic upsert (`INSERT … ON CONFLICT DO UPDATE … WHERE sessions < limit`), so concurrent sessions can't overshoot it. It is counted only after the per-browser checks pass, so rejected attempts don't use up the day.
 
 **Safe error messages.** Provider failures are mapped to plain messages: quota or exhausted credits → "Vaani has reached its transcription limit for now…"; anything else → "Transcription is unavailable right now…". Raw exception text is never sent to the client; details go to the server log only.
 
@@ -365,12 +379,14 @@ cd backend
 pytest
 ```
 
-**29 tests** cover:
+**40 tests** cover:
 
 - **CRUD:** create, generated titles, blank-text rejection, read and 404, search (including Devanagari) and pagination, partial update, delete.
 - **Privacy:** cookie issued once with `HttpOnly` and `SameSite`, invalid cookies replaced, another browser gets 404 on read, update and delete and sees an empty list.
 - **Live WebSocket:** full `ready → interim/final → done` flow with a fake provider, and rejection after the hourly limit.
 - **Rate limiter:** concurrent and hourly limits, window reset, shared IP, global cap, release on error (fake clock).
+- **Daily quota:** counts up to the limit, resets at Pacific midnight, survives a new instance (restart), no cap when unset, WebSocket rejection over the limit.
+- **Session timing:** fast finish when nothing is pending, waiting for an open segment's final, waking on a final that arrives during the wait, the hard timeout.
 - **Error mapping:** Gemini quota, credit, auth and network errors → user-safe messages; internal details never reach the client.
 - **Multilingual:** any valid language codes accepted, malformed ones rejected, `language` carried over the WebSocket.
 - **Static serving:** hashed assets are cached immutably and gzipped; `index.html` and client routes are revalidated.
@@ -387,7 +403,7 @@ Tests use in-memory SQLite and a fake STT provider, injected through FastAPI dep
 2. In Render: **New → Blueprint**, then select the repository. `render.yaml` creates:
    - **`vaani`**: a Docker web service (free plan), health-checked at `/api/health`
    - **`vaani-db`**: a PostgreSQL database (free plan), wired in as `DATABASE_URL`
-3. Enter **`GEMINI_API_KEY`** when prompted. The other settings are defined in `render.yaml`.
+3. Enter **`GEMINI_API_KEY`** when prompted, and **`STT_DAILY_SESSION_LIMIT`** (about 80% of the model's requests-per-day limit, or leave it empty for no cap). The other settings are defined in `render.yaml`.
 
 On start, the container runs `alembic upgrade head` and then uvicorn on `$PORT` with `--proxy-headers`, so the app sees the real client IP and HTTPS scheme.
 
@@ -402,7 +418,7 @@ On start, the container runs `alembic upgrade head` and then uvicorn on `$PORT` 
 ### Cost controls
 
 - Use a Gemini API key whose usage you control. Lowering the API's **per-minute and per-day quotas** in Google Cloud is a hard cap; budgets only send alerts.
-- The app's rate limiter caps concurrent and hourly sessions.
+- The app caps concurrent and hourly sessions, and `STT_DAILY_SESSION_LIMIT` caps sessions per day below the provider's quota.
 
 ---
 
@@ -415,7 +431,7 @@ On start, the container runs `alembic upgrade head` and then uvicorn on `$PORT` 
 | **Dependency injection** (`Depends`) | Tests replace the database, provider and limiter without touching application code |
 | **Vite SPA served by FastAPI** (not Next.js) | One container, one URL, no CORS. Serverless platforms can't hold long-lived WebSockets, and SSR adds nothing for a mic app |
 | **Backend audio proxy** | Keeps the API key off the client and allows rate limiting and error mapping |
-| **Auto-detect languages** instead of fixed hints | Code-switching works out of the box; the model reports the language per segment |
+| **Auto-detect languages** instead of fixed hints | Code-switching works out of the box with no language selection |
 | **Session state above the routes** (React context) | Recording and auto-save survive page navigation |
 | **Anonymous cookie ownership** instead of login | Private history with no sign-up friction for a demo; real accounts are the natural next step |
 | **In-memory rate limiter** | Fits a single instance with zero extra infrastructure; Redis would be the multi-instance upgrade |
@@ -426,9 +442,10 @@ On start, the container runs `alembic upgrade head` and then uvicorn on `$PORT` 
 
 - **Session length:** Gemini Live sessions are limited to about 10 minutes of continuous audio. Text captured up to that point is kept and saved; automatic reconnection is not implemented.
 - **Script choice is the model's:** mixed Hindi and English usually comes out romanized (Hinglish), while Malayalam and most other languages stay in their native script even when mixed with English.
-- **Language fallback:** if the model reports no language, it is guessed from the script, which can't distinguish languages that share one (e.g. Hindi and Marathi).
+- **Language labels come from the script:** the current model doesn't report a language, so labels are inferred from the writing system. That can't separate languages sharing a script (Hindi vs Marathi), and romanized speech such as Hinglish is labelled English. If the model starts reporting `language_code`, it is used automatically.
 - **Text-to-speech** depends on the voices installed on the device; without a matching voice the browser default is used.
 - **History is per browser:** clearing cookies or switching device starts an empty history.
-- **Rate limits** are in memory: they reset on restart and aren't shared across instances.
+- **Per-browser and per-IP limits** are in memory: they reset on restart and aren't shared across instances. The daily cap is stored in the database.
+- **The daily cap counts sessions**, which approximates the provider's request count; keep a margin below the real limit.
 - **Free tiers:** Render's free service sleeps when idle (~30 s cold start). On the Gemini API free tier, Google may use submitted content to improve its products, so avoid recording anything sensitive.
 - **Browser requirements:** microphone access needs HTTPS (or `localhost`) and a browser with `AudioWorklet` support (all current major browsers).

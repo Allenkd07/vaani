@@ -18,6 +18,9 @@ services:
         value: gemini-3.5-transcribe-live
       - key: STT_MODE
         value: VERBATIM
+      # Set to ~80% of the model's requests-per-day limit shown at aistudio.google.com/rate-limit.
+      - key: STT_DAILY_SESSION_LIMIT
+        sync: false
 
 databases:
   - name: vaani-db

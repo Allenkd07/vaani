@@ -4,9 +4,11 @@ from typing import Annotated
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.rate_limit import Limit, SessionLimiter
-from app.db.session import get_db
+from app.db.session import SessionLocal, get_db
 from app.repositories.transcription_repository import TranscriptionRepository
+from app.services.daily_quota import DailyQuota
 from app.services.transcription_service import TranscriptionService
 from app.stt.base import SpeechToTextProvider
 from app.stt.factory import get_stt_provider
@@ -31,6 +33,12 @@ def get_session_limiter() -> SessionLimiter:
     )
 
 
+@lru_cache
+def get_daily_quota() -> DailyQuota:
+    return DailyQuota(SessionLocal, get_settings().stt_daily_session_limit)
+
+
 TranscriptionServiceDep = Annotated[TranscriptionService, Depends(get_transcription_service)]
 SpeechToTextProviderDep = Annotated[SpeechToTextProvider, Depends(get_stt_provider)]
 SessionLimiterDep = Annotated[SessionLimiter, Depends(get_session_limiter)]
+DailyQuotaDep = Annotated[DailyQuota, Depends(get_daily_quota)]

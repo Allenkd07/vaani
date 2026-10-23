@@ -2,11 +2,13 @@ from contextlib import asynccontextmanager
 
 import pytest
 from google.genai.errors import APIError
+from starlette.websockets import WebSocketDisconnect
 
 from app.main import app
 from app.stt.base import SpeechToTextError, SpeechToTextProvider
 from app.stt.factory import get_stt_provider
 from app.stt.gemini_live import QUOTA_MESSAGE, UNAVAILABLE_MESSAGE, to_user_error
+from tests.conftest import FakeSession
 
 
 @pytest.mark.parametrize(
@@ -51,3 +53,20 @@ def test_unexpected_error_details_are_not_sent_to_client(client):
     message = receive_error(client, RuntimeError("connection to 10.0.0.5:5432 refused"))
     assert message["type"] == "error"
     assert "10.0.0.5" not in message["message"]
+
+
+class FailsOnCloseProvider(SpeechToTextProvider):
+    @asynccontextmanager
+    async def open_session(self):
+        yield FakeSession()
+        raise RuntimeError("provider teardown failed")
+
+
+def test_error_while_closing_provider_does_not_reach_client(client):
+    app.dependency_overrides[get_stt_provider] = FailsOnCloseProvider
+    with client.websocket_connect("/ws/transcribe") as ws:
+        assert ws.receive_json() == {"type": "ready"}
+        ws.send_json({"type": "stop"})
+        assert ws.receive_json() == {"type": "done"}
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()

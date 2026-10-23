@@ -66,7 +66,7 @@ class GeminiLiveSession(SpeechToTextSession):
                         yield TranscriptEvent(type="interim", text=interim.text, language=interim.language_code)
                     final = content.input_transcription
                     if final and final.text:
-                        logger.info("Final segment language: %s", final.language_code)
+                        logger.debug("Final segment language: %s", final.language_code)
                         yield TranscriptEvent(type="final", text=final.text, language=final.language_code)
                 if self._audio_ended or not received:  # empty pass = server closed the session
                     return

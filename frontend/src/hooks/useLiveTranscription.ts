@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { startMicCapture, type MicCapture } from "../audio/micCapture";
-import { addLanguage } from "../lib/language";
+import { addLanguage, detectScriptLanguages } from "../lib/language";
 
 export type LiveStatus = "idle" | "connecting" | "recording" | "finishing" | "error";
 
@@ -9,12 +9,35 @@ type ServerMessage =
   | { type: "interim" | "final"; text: string; language?: string | null }
   | { type: "error"; message: string };
 
+// Audio captured before the server is ready is queued, up to ~10 s of 100 ms chunks.
+const MAX_BUFFERED_CHUNKS = 100;
+
+/** One recording's socket plus the audio queued while the provider session opens. */
+interface Connection {
+  socket: WebSocket;
+  ready: boolean;
+  buffer: ArrayBuffer[];
+  stopRequested: boolean;
+}
+
+const STOP_MESSAGE = JSON.stringify({ type: "stop" });
+
+/** The provider's language when it reports one, otherwise languages guessed from the text's script. */
+function messageLanguages(text: string, language: string | null | undefined): string[] {
+  return language ? [language] : detectScriptLanguages(text);
+}
+
+const mergeLanguages = (current: string[], codes: string[]) => codes.reduce(addLanguage, current);
+
 function socketUrl(): string {
   const protocol = window.location.protocol === "https:" ? "wss" : "ws";
   return `${protocol}://${window.location.host}/ws/transcribe`;
 }
 
-/** Mic and WebSocket lifecycle; exposes the live transcript as state. */
+/**
+ * Mic and WebSocket lifecycle; exposes the live transcript as state.
+ * The mic starts immediately and the WebSocket connects in parallel, so speech during setup is not lost.
+ */
 export function useLiveTranscription() {
   const [status, setStatus] = useState<LiveStatus>("idle");
   const [segments, setSegments] = useState<string[]>([]);
@@ -24,8 +47,10 @@ export function useLiveTranscription() {
   const [level, setLevel] = useState(0);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // True once the provider session is open; distinguishes "couldn't start" from a mid-session failure.
+  const [connected, setConnected] = useState(false);
 
-  const socketRef = useRef<WebSocket | null>(null);
+  const connectionRef = useRef<Connection | null>(null);
   const micRef = useRef<MicCapture | null>(null);
   const interimRef = useRef("");
   const timerRef = useRef<number | null>(null);
@@ -56,7 +81,7 @@ export function useLiveTranscription() {
       setError(message);
       setStatus("error");
       void stopMic();
-      socketRef.current?.close();
+      connectionRef.current?.socket.close();
     },
     [stopMic],
   );
@@ -67,34 +92,31 @@ export function useLiveTranscription() {
     updateInterim("");
     setElapsedSec(0);
     setError(null);
+    setConnected(false);
     setStatus("connecting");
 
     const socket = new WebSocket(socketUrl());
     socket.binaryType = "arraybuffer";
-    socketRef.current = socket;
+    const connection: Connection = { socket, ready: false, buffer: [], stopRequested: false };
+    connectionRef.current = connection;
 
-    socket.onmessage = async (event) => {
+    socket.onmessage = (event) => {
       const message = JSON.parse(event.data) as ServerMessage;
       switch (message.type) {
         case "ready":
-          try {
-            micRef.current = await startMicCapture((pcm) => {
-              if (socket.readyState === WebSocket.OPEN) socket.send(pcm);
-            }, setLevel);
-            const startedAt = Date.now();
-            timerRef.current = window.setInterval(() => setElapsedSec(Math.round((Date.now() - startedAt) / 1000)), 500);
-            setStatus("recording");
-          } catch {
-            fail("Microphone access was denied or is unavailable.");
-          }
+          connection.ready = true;
+          setConnected(true);
+          connection.buffer.forEach((pcm) => socket.send(pcm));
+          connection.buffer = [];
+          if (connection.stopRequested) socket.send(STOP_MESSAGE);
           break;
         case "interim":
           updateInterim(message.text);
-          setLanguages((prev) => addLanguage(prev, message.language));
+          setLanguages((prev) => mergeLanguages(prev, messageLanguages(message.text, message.language)));
           break;
         case "final":
           setSegments((prev) => [...prev, message.text.trim()]);
-          setLanguages((prev) => addLanguage(prev, message.language));
+          setLanguages((prev) => mergeLanguages(prev, messageLanguages(message.text, message.language)));
           updateInterim("");
           break;
         case "error":
@@ -112,13 +134,37 @@ export function useLiveTranscription() {
       void stopMic();
       setStatus((current) => (current === "error" ? current : "idle"));
     };
+
+    try {
+      const mic = await startMicCapture((pcm) => {
+        if (connection.ready) {
+          if (socket.readyState === WebSocket.OPEN) socket.send(pcm);
+        } else if (connection.buffer.length < MAX_BUFFERED_CHUNKS) {
+          connection.buffer.push(pcm);
+        }
+      }, setLevel);
+      // The session may have failed or been replaced while the permission prompt was open.
+      if (connectionRef.current !== connection || socket.readyState >= WebSocket.CLOSING) {
+        await mic.stop();
+        return;
+      }
+      micRef.current = mic;
+      const startedAt = Date.now();
+      timerRef.current = window.setInterval(() => setElapsedSec(Math.round((Date.now() - startedAt) / 1000)), 500);
+      setStatus((current) => (current === "connecting" ? "recording" : current));
+    } catch {
+      fail("Microphone access was denied or is unavailable.");
+    }
   }, [fail, stopMic]);
 
   const stop = useCallback(async () => {
     setStatus("finishing");
     await stopMic();
-    const socket = socketRef.current;
-    if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "stop" }));
+    const connection = connectionRef.current;
+    if (!connection) return;
+    // Before ready, the stop is sent after the queued audio is flushed.
+    if (!connection.ready) connection.stopRequested = true;
+    else if (connection.socket.readyState === WebSocket.OPEN) connection.socket.send(STOP_MESSAGE);
   }, [stopMic]);
 
   const reset = useCallback(() => {
@@ -127,13 +173,14 @@ export function useLiveTranscription() {
     updateInterim("");
     setElapsedSec(0);
     setError(null);
+    setConnected(false);
     setStatus("idle");
   }, []);
 
   useEffect(
     () => () => {
       void stopMic();
-      socketRef.current?.close();
+      connectionRef.current?.socket.close();
     },
     [stopMic],
   );
@@ -147,6 +194,7 @@ export function useLiveTranscription() {
     level,
     elapsedSec,
     error,
+    connected,
     start,
     stop,
     reset,

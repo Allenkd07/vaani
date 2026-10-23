@@ -1,4 +1,6 @@
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,12 +11,22 @@ from app.api.routes import live, transcriptions
 from app.core.config import get_settings
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.owner import ensure_owner_cookie
+from app.stt.factory import get_stt_provider
 
 logging.basicConfig(level=logging.INFO)
 
 settings = get_settings()
 
-app = FastAPI(title="Vaani")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    # Building the provider imports the Gemini SDK, which takes seconds; doing it at startup keeps the
+    # first live session after a deploy or wake-up as fast as the rest. It also fails fast on a bad config.
+    get_stt_provider()
+    yield
+
+
+app = FastAPI(title="Vaani", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

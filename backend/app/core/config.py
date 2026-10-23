@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # Comma-separated BCP-47 codes; empty = automatic detection.
     stt_languages: str = ""
 
+    # App-wide live sessions per day (Pacific time, like the Gemini quota); empty = no app-level cap.
+    stt_daily_session_limit: int | None = None
+
     # Comma-separated; empty = same origin only (FastAPI serves the frontend, Vite proxies in dev).
     cors_origins: str = ""
 
@@ -35,6 +38,11 @@ class Settings(BaseSettings):
             if value.startswith(prefix):
                 return "postgresql+psycopg://" + value[len(prefix):]
         return value
+
+    @field_validator("stt_daily_session_limit", mode="before")
+    @classmethod
+    def empty_limit_is_none(cls, value: object) -> object:
+        return None if value == "" else value
 
     @property
     def language_codes(self) -> list[str]:
