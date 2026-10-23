@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#ffffff" />
+    <meta name="description" content="Vaani transcribes speech live in many languages, including mixed speech like Hinglish." />
+    <title>Vaani · Speech to Text</title>
+    <script>
+      // Apply the saved or system theme before first paint to avoid a light flash. See src/hooks/useTheme.ts.
+      (function () {
+        var theme;
+        try {
+          theme = localStorage.getItem("vaani-theme");
+        } catch (e) {}
+        if (theme !== "light" && theme !== "dark") {
+          theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        }
+        document.documentElement.dataset.theme = theme;
+        if (theme === "dark") document.querySelector('meta[name="theme-color"]').setAttribute("content", "#202124");
+      })();
+    </script>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Outfit:wght@500&family=Roboto:wght@400;500&family=Noto+Sans+Devanagari:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
