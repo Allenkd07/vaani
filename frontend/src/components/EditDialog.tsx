@@ -44,7 +44,7 @@ export default function EditDialog({ transcription, onSave, onClose }: Props) {
   return (
     <dialog ref={dialogRef} className="dialog" onClose={onClose}>
       <form onSubmit={submit} className="dialog-form">
-        <h2>Edit transcription</h2>
+        <h2>Edit transcript</h2>
         <label className="field">
           <span>Title</span>
           <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} />

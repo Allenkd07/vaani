@@ -29,7 +29,7 @@ export function useTranscriptions() {
       setData(await transcriptionsApi.list({ search: debouncedSearch, page, size: PAGE_SIZE }));
       setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load transcriptions");
+      setError(err instanceof Error ? err.message : "Couldn’t load your transcripts. Please try again.");
     } finally {
       setLoading(false);
     }

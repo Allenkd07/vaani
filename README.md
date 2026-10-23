@@ -1,6 +1,6 @@
 # Vaani — real-time multilingual speech to text
 
-*Vaani* (वाणी) is Hindi and Sanskrit for "speech" or "voice". It transcribes what you say **live, as you speak**, in your language or a mix of languages, saves each transcription, and gives you a searchable history you can edit, play back and delete.
+*Vaani* (वाणी) is Hindi and Sanskrit for "speech" or "voice". It transcribes what you say **live, as you speak**, in your language or a mix of languages, saves each transcript, and gives you a searchable history you can edit, play back and delete.
 
 - **Live demo:** *link added after deployment* (Render free tier: the first request after idle can take ~30 s)
 - **Stack:** FastAPI · PostgreSQL · SQLAlchemy 2 + Alembic · React 19 + Vite + TypeScript · Gemini Live API (`gemini-3.5-transcribe-live`) · Docker · Render
@@ -34,7 +34,7 @@
 - A mic button whose halo follows your voice level, plus a timer and clear status ("Listening…", "Finishing up…", "Couldn't start").
 
 **Saving and history**
-- **Auto-save:** a transcription is saved as soon as you stop, so nothing is lost if you navigate away. The recording session also keeps running if you switch pages mid-recording.
+- **Auto-save:** a transcript is saved as soon as you stop, so nothing is lost if you navigate away. The recording session also keeps running if you switch pages mid-recording.
 - **History** with full CRUD: entries grouped by date (Today, Yesterday, This week, by month), relative times, search with highlighted matches, inline expand, edit dialog, delete confirmation and pagination.
 - **Listen:** text-to-speech playback with a voice chosen for the detected language, plus copy to clipboard.
 

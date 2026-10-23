@@ -38,7 +38,7 @@ export default function DashboardPage() {
     if (!deleting) return;
     if (speech.speakingId === deleting.id) speech.stop();
     await remove(deleting.id);
-    toast.show("Transcription deleted");
+    toast.show("Transcript deleted");
   };
 
   const copy = async (item: Transcription) => {
@@ -56,7 +56,7 @@ export default function DashboardPage() {
         <h1>History</h1>
         {data && (
           <span className="history-count">
-            {data.total} transcription{data.total === 1 ? "" : "s"}
+            {data.total} transcript{data.total === 1 ? "" : "s"}
           </span>
         )}
       </div>
@@ -65,17 +65,17 @@ export default function DashboardPage() {
         <Icon name="search" />
         <input
           type="search"
-          placeholder="Search transcriptions"
+          placeholder="Search transcripts"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          aria-label="Search transcriptions"
+          aria-label="Search transcripts"
         />
       </label>
 
       {error && <p className="notice is-error">{error}</p>}
 
       {loading && !data && (
-        <ul className="history-list" aria-busy="true" aria-label="Loading transcriptions">
+        <ul className="history-list" aria-busy="true" aria-label="Loading transcripts">
           {Array.from({ length: SKELETON_ROWS }, (_, i) => (
             <li key={i} className="history-item is-skeleton">
               <span className="skeleton-line is-title" />
@@ -89,7 +89,7 @@ export default function DashboardPage() {
       {!loading && data?.items.length === 0 && (
         <div className="empty">
           <Icon name={query ? "search" : "history"} size={40} />
-          <p>{query ? `Nothing matches “${query}”.` : "Your saved transcriptions will appear here."}</p>
+          <p>{query ? `Nothing matches “${query}”.` : "Your saved transcripts will appear here."}</p>
           {!query && (
             <Link to="/" className="btn filled">
               Start recording
@@ -198,7 +198,7 @@ export default function DashboardPage() {
       />
       <ConfirmDialog
         open={deleting !== null}
-        title="Delete transcription?"
+        title="Delete transcript?"
         confirmLabel="Delete"
         onConfirm={confirmDelete}
         onClose={() => setDeleting(null)}

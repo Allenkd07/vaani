@@ -29,13 +29,13 @@ class TranscriptionService:
         # Another owner's record is reported as missing, not forbidden, so IDs reveal nothing.
         transcription = self.repository.get(self.owner_id, transcription_id)
         if transcription is None:
-            raise NotFoundError("Transcription", transcription_id)
+            raise NotFoundError("Transcript", transcription_id)
         return transcription
 
     def create(self, data: TranscriptionCreate) -> Transcription:
         text = data.text.strip()
         if not text:
-            raise ValidationError("Transcription text cannot be blank")
+            raise ValidationError("Transcript text cannot be blank")
         title = (data.title or "").strip() or _default_title(text)
         return self.repository.add(
             Transcription(
@@ -54,7 +54,7 @@ class TranscriptionService:
         if "text" in changes:
             text = (changes["text"] or "").strip()
             if not text:
-                raise ValidationError("Transcription text cannot be blank")
+                raise ValidationError("Transcript text cannot be blank")
             changes["text"] = text
         if "title" in changes:
             changes["title"] = (changes["title"] or "").strip() or _default_title(changes.get("text", transcription.text))
