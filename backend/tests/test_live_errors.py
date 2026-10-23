@@ -48,6 +48,6 @@ def test_provider_error_message_reaches_client(client):
 
 
 def test_unexpected_error_details_are_not_sent_to_client(client):
-    message = receive_error(client, RuntimeError("postgres password=hunter2"))
+    message = receive_error(client, RuntimeError("connection to 10.0.0.5:5432 refused"))
     assert message["type"] == "error"
-    assert "hunter2" not in message["message"]
+    assert "10.0.0.5" not in message["message"]

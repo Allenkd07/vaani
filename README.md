@@ -203,16 +203,17 @@ The frontend has **no runtime dependencies beyond React and React Router**. Mic 
 ### 1. Database
 
 ```bash
+cp .env.example .env                # set POSTGRES_PASSWORD to any local password
 docker compose up -d db
 ```
 
-Postgres 17 is exposed on host port **5433**, so it doesn't clash with a locally installed Postgres on 5432.
+Database credentials are read from the git-ignored root `.env`, so none are committed. Postgres 17 is exposed on host port **5433**, so it doesn't clash with a locally installed Postgres on 5432.
 
 ### 2. Backend
 
 ```bash
 cd backend
-cp .env.example .env                # set GEMINI_API_KEY (see Configuration)
+cp .env.example .env                # set GEMINI_API_KEY, and the password in DATABASE_URL to match the root .env
 python -m venv .venv
 source .venv/bin/activate           # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt
@@ -236,7 +237,7 @@ Vite proxies `/api` and `/ws` to `localhost:8000`, so the app uses the same rela
 docker compose up --build           # http://localhost:8000
 ```
 
-The app container builds the frontend, runs migrations on start and serves everything on one port. It reads `backend/.env` for the Gemini key.
+The app container builds the frontend, runs migrations on start and serves everything on one port. It reads `backend/.env` for the Gemini key and builds its `DATABASE_URL` from the root `.env`.
 
 ---
 
@@ -246,7 +247,7 @@ All environment-specific settings come from environment variables, or from `back
 
 | Variable | Required | Example | Description |
 |---|---|---|---|
-| `DATABASE_URL` | yes | `postgresql+psycopg://postgres:postgres@localhost:5433/speech_to_text` | Render's `postgres://` URLs are converted automatically |
+| `DATABASE_URL` | yes | `postgresql+psycopg://postgres:<password>@localhost:5433/speech_to_text` | Render's `postgres://` URLs are converted automatically |
 | `STT_PROVIDER` | yes | `gemini` | Speech-to-text implementation (Strategy) |
 | `GEMINI_API_KEY` | yes | — | Server-side only; never sent to the browser |
 | `GEMINI_MODEL` | yes | `gemini-3.5-transcribe-live` | Live transcription model |
@@ -254,7 +255,7 @@ All environment-specific settings come from environment variables, or from `back
 | `STT_LANGUAGES` | no | *(empty)* | Comma-separated BCP-47 hints, e.g. `hi-IN,en-IN`. **Empty = automatic detection** (recommended; it handles code-switching) |
 | `CORS_ORIGINS` | no | *(empty)* | Only needed if a different origin calls the API. Empty = same origin only |
 
-`backend/.env` is git-ignored; `backend/.env.example` documents every variable.
+`backend/.env` is git-ignored; `backend/.env.example` documents every variable. The local Postgres container's own credentials (`POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`) live in the git-ignored root `.env` (template: `.env.example`).
 
 ---
 
